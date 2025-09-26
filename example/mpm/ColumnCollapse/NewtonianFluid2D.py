@@ -1,6 +1,10 @@
-from geotaichi import *
+import sys
+sys.path.append('../../..')
 
-init(dim=2, device_memory_GB=3.7)
+from geotaichi.__init__ import *
+from src.__init__ import *
+
+init(dim=2, device_memory_GB=3.7, log=False)
 
 mpm = MPM()
 
@@ -8,21 +12,21 @@ mpm.set_configuration(domain=[6., 6.],
                       background_damping=0.0,
                       alphaPIC=1.0, 
                       mapping="USL", 
-                      shape_function="QuadBSpline",
+                      shape_function="CubicBSpline",
                       gravity=[0., -9.8],
                       material_type="Fluid",
-                      velocity_projection="Affine") #"also support for Taylor PIC"
+                      velocity_projection="Taylor") #"also support for Taylor PIC"
 
 mpm.set_solver({
-                      "Timestep":         1e-5,
-                      "SimulationTime":   4,
-                      "SaveInterval":     1e-1,
-                      "SavePath":         'large_tank'
+                      "Timestep":         2e-6,
+                      "SimulationTime":   20,
+                      "SaveInterval":     5e-2,
+                      "SavePath":         'NewtonianFluid2D'
                  }) 
-                      
+
 mpm.memory_allocate(memory={
                                 "max_material_number":           1,
-                                "max_particle_number":           56000,
+                                "max_particle_number":           100352,
                                 "verlet_distance_multiplier":    1.,
                                 "max_constraint_number":  {
                                                                "max_reflection_constraint":   541681
@@ -42,7 +46,7 @@ mpm.add_material(model="Newtonian",
 
 mpm.add_element(element={
                              "ElementType":               "Q4N2D",
-                             "ElementSize":               [0.02, 0.02]
+                             "ElementSize":               [0.01, 0.01]
                         })
 
 
@@ -105,6 +109,6 @@ mpm.select_save_data(grid=True)
 
 mpm.run()
 
-mpm.postprocessing()
+mpm.postprocessing(read_path='NewtonianFluid2D', write_background_grid=True)
 
 

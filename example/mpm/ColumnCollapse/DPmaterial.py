@@ -1,4 +1,8 @@
-from geotaichi import *
+import sys
+sys.path.append('../../..')
+
+from geotaichi.__init__ import *
+from src.__init__ import *
 
 init(arch="gpu")
 
@@ -19,7 +23,8 @@ mpm.set_configuration(domain=ti.Vector([0.55, 0.05, 0.11]),
 mpm.set_solver(solver={
                            "Timestep":                   1e-5,
                            "SimulationTime":             3.,
-                           "SaveInterval":               0.02
+                           "SaveInterval":               0.02,
+                           "SavePath":                   'DPmaterial'
                       })
 
 mpm.memory_allocate(memory={
@@ -106,8 +111,8 @@ mpm.add_boundary_condition(boundary=[
                                         }
                                     ])
 
-mpm.select_save_data()
+mpm.select_save_data(grid=True)
 
 mpm.run()
 
-mpm.postprocessing()
+mpm.postprocessing(read_path='DPmaterial', write_background_grid=True)

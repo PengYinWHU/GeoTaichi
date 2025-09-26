@@ -1,4 +1,8 @@
-from geotaichi import *
+import sys
+sys.path.append('../../..')
+
+from geotaichi.__init__ import *
+from src.__init__ import *
 
 init(dim=2, device_memory_GB=2)
 
@@ -18,7 +22,7 @@ mpm.set_solver(solver={
                            "Timestep":                   1e-5,
                            "SimulationTime":             5,
                            "SaveInterval":               0.2,
-                           "SavePath":                   'DP2DPlane'
+                           "SavePath":                   'DPmaterial2D'
                       })
 
 mpm.memory_allocate(memory={
@@ -44,7 +48,7 @@ mpm.add_material(model="DruckerPrager",
 
 mpm.add_element(element={
                              "ElementType":               "Q4N2D",
-                             "ElementSize":               ti.Vector([0.05, 0.05]),
+                             "ElementSize":               ti.Vector([0.025, 0.025]),
                              "Contact":   {}
                         })
 
@@ -93,4 +97,4 @@ mpm.select_save_data(grid=True)
 
 mpm.run()
 
-mpm.postprocessing(read_path='DP2DPlane', write_background_grid=True)
+mpm.postprocessing(read_path='DPmaterial2D', write_background_grid=True)

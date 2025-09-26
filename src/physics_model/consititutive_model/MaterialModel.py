@@ -265,8 +265,9 @@ class Fluid(MaterialModel):
         volumetric_strain_rate = voigt_tensor_trace(strain_rate) 
         volumetric_strain_increment = volumetric_strain_rate * dt[None]
         pressure = -stateVars[np].pressure + self.thermodynamic_pressure(stateVars[np].rho, volumetric_strain_increment)
-        artifical_pressure = self.artifical_viscosity(np, volumetric_strain_rate, stateVars)
-        pressureAV = pressure + artifical_pressure
+        # artifical_pressure = self.artifical_viscosity(np, volumetric_strain_rate, stateVars)
+        # pressureAV = pressure + artifical_pressure
+        pressureAV = pressure 
         stateVars[np].pressure = -pressure
         return pressureAV
     
