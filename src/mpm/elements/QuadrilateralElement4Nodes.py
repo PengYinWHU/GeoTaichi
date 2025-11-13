@@ -4,7 +4,7 @@ import numpy as np
 import taichi as ti
 
 from src.mpm.elements.QuadrilateralKernel import *
-from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell
+from src.mpm.structs import HexahedronGuassCell, HexahedronCell, ParticleCPDI, IncompressibleCell, HexahedronFreeSurfaceCell
 from src.mpm.elements.ElementNodesTHB_Generate import ElemNodesGen
 from src.mpm.elements.ElementBase import ElementBase
 from src.mpm.Simulation import Simulation
@@ -40,6 +40,7 @@ class QuadrilateralElement4Nodes(ElementBase):
         self.gauss_point = None
         self.cell = None
         self.gauss_cell = None
+        self.fs_cell = None
         self.node_connectivity = None
         self.LnID = None
         self.shape_fn = None
@@ -320,6 +321,12 @@ class QuadrilateralElement4Nodes(ElementBase):
             if not self.cell is None:
                 print("Warning: Previous Euler cells will be override!")
             self.cell = IncompressibleCell(self.cnum, self.cellSum, self.ghost_cell)
+
+    def activate_free_surface_cell(self, sims: Simulation):
+        if not self.fs_cell is None:
+            print("Warning: Previous cells will be override!")
+        self.fs_cell = HexahedronFreeSurfaceCell.field(shape=(self.get_total_cell_number(), self.grid_level))
+        activate_cell(self.fs_cell)
 
     def set_up_cell_active_flag(self, fb: ti.FieldsBuilder):
         self.cell_active = ti.field(u1)

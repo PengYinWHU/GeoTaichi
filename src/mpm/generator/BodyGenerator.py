@@ -11,9 +11,8 @@ from src.mpm.Simulation import Simulation
 from src.mesh.GaussPoint import GaussPointInRectangle, GaussPointInTriangle
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
-from src.utils.TypeDefination import vec3f, vec6f, vec2u8, vec3u8, vec2f
+from src.utils.TypeDefination import vec3f, vec6f, vec2u8, vec3u8, vec2f, mat3x3, mat2x2
 from third_party.pyevtk.hl import pointsToVTK
-
 
 class BodyGenerator(Generator):
     sims: Simulation
@@ -217,6 +216,8 @@ class BodyGenerator(Generator):
                 elif self.sims.material_type == 'TwoPhaseSingleLayer':
                     kernel_add_body_twophase2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, densityf, porosity, permeability, init_v, fix_v)
             self.set_particle_stress(scene, particleNum, particle_count, particle_stress)
+            if self.sims.dual_volume_averaging is True:
+                self.set_particle_deformation_gradient(scene, particle_count)
             scene.push_psize(np.repeat([psize], particle_count, axis=0))
             traction = DictIO.GetAlternative(template, "Traction", {})
             self.set_traction(particle_count, traction, scene, region)

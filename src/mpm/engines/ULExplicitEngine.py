@@ -17,6 +17,7 @@ class ULExplicitEngine(Engine):
         self.apply_velocity_constraints = None
         self.apply_friction_constraints = None
         self.apply_reflection_constraints = None
+        self.apply_pressure_constraints = None
 
         self.pre_contact_calculate = None
         self.compute_contact_force_ = None
@@ -24,6 +25,13 @@ class ULExplicitEngine(Engine):
         self.apply_contact_reflection_constraints = None
 
         self.pressure_smoothing_ = None
+        self.compute_grid_volume_averaged_jacobian = None
+        self.compute_volume_averaged_relative_deformation_gradient = None
+        self.compute_volume_averaged_jacobian = None
+        self.pi_projection_ = None
+        self.pressure_smoothing_visualization_ = None
+        self.free_surface_by_volume = None
+        self.particle_shifting_ = None
         self.compute_nodal_kinematic = None
         self.compute_forces = None
         self.execute_board_serach = None
@@ -46,6 +54,11 @@ class ULExplicitEngine(Engine):
             self.apply_friction_constraints = self.friction_constraints
         if int(scene.boundary.absorbing_list[0]) > 0:
             self.apply_absorbing_constraints = self.absorbing_constraints
+        if sims.dual_volume_averaging:
+            if sims.dimension == 2:
+                self.apply_pressure_constraints = self.apply_dirichlet_pressure_constraints_2D
+            elif sims.dimension == 3:
+                self.apply_pressure_constraints = self.apply_dirichlet_pressure_constraints
 
     def calculate_precontact_2DAxisy(self, sims: Simulation, scene: myScene):
         kernel_calc_contact_normal_2DAxisy(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
@@ -89,6 +102,60 @@ class ULExplicitEngine(Engine):
             start_index = scene.material.mapping[materialID]
             end_index = scene.material.mapping[materialID + 1]
             kernel_compute_stress_strain_2D(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
+
+    def update_grid_volume_averaged_jacobian(self, sims: Simulation, scene: myScene):
+        scene.node.vol.fill(0)
+        scene.node.volume_averaged_jacobian.fill(0)
+        kernel_update_grid_volume_averaged_jacobian_p2g(int(scene.particleNum[0]), scene.element.grid_nodes, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_grid_volume_averaged_jacobian(scene.volume_cut_off, scene.is_rigid, scene.node)
+
+    def update_volume_averaged_relative_deformation_gradient(self, sims: Simulation, scene: myScene):
+        kernel_volume_averaged_relative_deformation_gradient_g2p(int(scene.particleNum[0]), scene.element.grid_nodes, sims.dt, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
+    def update_volume_averaged_jacobian(self, sims: Simulation, scene: myScene):
+        kernel_update_volume_averaged_jacobian(int(scene.particleNum[0]), scene.particle)
+
+    def update_volume_averaged_jacobian_2D(self, sims: Simulation, scene: myScene):
+        kernel_update_volume_averaged_jacobian_2D(int(scene.particleNum[0]), scene.particle)
+
+    def pi_projection(self, sims: Simulation, scene: myScene):
+        scene.node.vol.fill(0)
+        scene.node.pressure.fill(0)
+        kernel_pi_volume_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_pi_pressure_p2g(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_grid_pressure_volume(scene.volume_cut_off, scene.is_rigid, scene.node)
+        self.apply_pressure_constraints(sims, scene)
+        kernel_pi_pressure_g2p(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
+    def compute_stress_strain_dual_volume(self, sims: Simulation, scene: myScene):
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain_dual_volume(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)        
+
+    def compute_stress_strain_dual_volume_2D(self, sims: Simulation, scene: myScene):
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_compute_stress_strain_dual_volume_2D(start_index, end_index, sims.dt, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars)
+
+    def detection_free_surface_cell(self, sims: Simulation, scene: myScene):
+        fs_cell_reset(scene.element.fs_cell)
+        kernel_volume_p2c(scene.element.cnum, scene.element.igrid_size, int(scene.particleNum[0]), scene.element.fs_cell, scene.particle)
+        kernel_find_free_surface_element_trail(scene.element.cell_volume, scene.element.fs_cell)
+        kernel_determine_real_free_surface_element(scene.element.cnum, scene.element.fs_cell)
+
+    def detection_free_surface_cell_2D(self, sims: Simulation, scene: myScene):
+        fs_cell_reset(scene.element.fs_cell)
+        kernel_volume_p2c_2D(scene.element.cnum, scene.element.igrid_size, int(scene.particleNum[0]), scene.element.fs_cell, scene.particle)
+        kernel_find_free_surface_element_trail(scene.element.cell_volume, scene.element.fs_cell)
+        kernel_determine_real_free_surface_element_2D(scene.element.cnum, scene.element.fs_cell)       
+
+    def apply_dirichlet_pressure_constraints(self, sims: Simulation, scene: myScene):
+        kernel_apply_dirichlet_pressure_constraints(scene.element.cnum, scene.element.gnum, scene.element.fs_cell, scene.node)
+
+    def apply_dirichlet_pressure_constraints_2D(self, sims: Simulation, scene: myScene):
+        kernel_apply_dirichlet_pressure_constraints_2D(scene.element.cnum, scene.element.gnum, scene.element.fs_cell, scene.node)
 
     def compute_stress_strain_velocity_projection_2D(self, sims: Simulation, scene: myScene):
         scene.node.vol.fill(0)
@@ -148,6 +215,20 @@ class ULExplicitEngine(Engine):
             kernel_update_velocity_gradient_affine(scene.element.grid_nodes, start_index, end_index, scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, scene.material.materialID, 
                                                    scene.material.matProps[materialID + 1], scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
+    def update_velocity_gradient_volume_averaging_2D(self, sims: Simulation, scene: myScene):
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_volume_averaging_2D(scene.element.grid_nodes, start_index, end_index, scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, scene.material.materialID, 
+                                                                scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
+    def update_velocity_gradient_volume_averaging(self, sims: Simulation, scene: myScene):
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_update_velocity_gradient_volume_averaging(scene.element.grid_nodes, start_index, end_index, scene.element.gnum, scene.element.grid_size, sims.dt, scene.node, scene.particle, scene.material.materialID, 
+                                                             scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
     def update_velocity_gradient_bbar_2D(self, sims: Simulation, scene: myScene):
         for materialID in range(scene.material.mapping.shape[0] - 1):
             start_index = scene.material.mapping[materialID]
@@ -176,10 +257,15 @@ class ULExplicitEngine(Engine):
             kernel_update_velocity_gradient_bbar_2DAxisy(scene.element.grid_nodes, start_index, end_index, sims.dt, scene.node, scene.particle, scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
                                                          scene.element.LnID, scene.element.shape_fn, scene.element.shape_fnc, scene.element.dshape_fn, scene.element.dshape_fnc, scene.element.node_size)
 
-    def particle_shifting(self, sims: Simulation, scene: myScene):
+    def delta_particle_shifting(self, sims: Simulation, scene: myScene):
         scene.node.vol.fill(0)
         kernel_volume_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         kernel_particle_shifting_delta_correction(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.grid_size, scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
+
+    def delta_particle_shifting_2D(self, sims: Simulation, scene: myScene):
+        scene.node.vol.fill(0)
+        kernel_volume_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_particle_shifting_delta_correction_2D(scene.element.grid_nodes, int(scene.particleNum[0]), scene.element.grid_size, scene.node, scene.particle, scene.element.LnID, scene.element.dshape_fn, scene.element.node_size)
         
     def compute_force(self, sims: Simulation, scene: myScene):
         kernel_force_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), sims.gravity, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
@@ -357,6 +443,25 @@ class ULExplicitEngine(Engine):
         self.pre_contact_calculate(sims, scene)
         self.apply_kinematic_constraints(sims, scene)
         self.compute_contact_force_(sims, scene)
+        self.compute_velocity_gradient(sims, scene)
+        self.compute_particle_kinematic(sims, scene)
+
+    def dual_volume_averaging_updating(self, sims: Simulation, scene: myScene, neighbor=None):
+        self.calculate_interpolation(sims, scene)        
+        self.compute_nodal_kinematic(sims, scene)
+        self.compute_grid_velcity(sims, scene)
+        self.apply_dirichlet_constraints(sims, scene)
+        self.free_surface_by_volume(sims, scene)
+        self.compute_grid_volume_averaged_jacobian(sims, scene)
+        self.compute_volume_averaged_relative_deformation_gradient(sims, scene)
+        self.compute_stress_strains(sims, scene)
+        self.pi_projection_(sims, scene)
+        self.compute_forces(sims, scene)
+        self.apply_particle_traction_constraints(sims, scene)
+        self.apply_traction_constraints(sims, scene)
+        self.apply_absorbing_constraints(sims, scene)
+        self.compute_grid_kinematic(sims, scene)
+        self.apply_kinematic_constraints(sims, scene)
         self.compute_velocity_gradient(sims, scene)
         self.compute_particle_kinematic(sims, scene)
 

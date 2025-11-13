@@ -69,6 +69,7 @@ class MPM(object):
         self.sims.set_particle_traction_method(DictIO.GetAlternative(kwargs, "particle_traction_method", "Stable"))
         self.sims.set_AOSOA(DictIO.GetAlternative(kwargs, "AOSOA", False))
         self.sims.set_random_field(DictIO.GetAlternative(kwargs, "random_field", False))
+        self.sims.set_dual_volume_averaging(DictIO.GetAlternative(kwargs, "dual_volume_averaging", False))
         if log: 
             self.print_basic_simulation_info()
             print('\n')

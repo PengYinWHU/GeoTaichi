@@ -20,6 +20,7 @@ class Engine(object):
         self.apply_velocity_constraints = None
         self.apply_friction_constraints = None
         self.apply_reflection_constraints = None
+        self.apply_pressure_constraints = None
 
         self.pre_contact_calculate = None
         self.compute_contact_force_ = None
@@ -27,6 +28,14 @@ class Engine(object):
         self.apply_contact_reflection_constraints = None
 
         self.pressure_smoothing_ = None
+
+        self.compute_grid_volume_averaged_jacobian = None
+        self.compute_volume_averaged_relative_deformation_gradient = None
+        self.compute_volume_averaged_jacobian = None
+        self.pi_projection_ = None
+        self.pressure_smoothing_visualization_ = None
+        self.free_surface_by_volume = None
+        self.particle_shifting_ = None
         self.compute_nodal_kinematic = None
         self.compute_forces = None
         self.execute_board_serach = None
@@ -57,6 +66,10 @@ class Engine(object):
 
             if sims.TESTMODE:
                 self.compute = self.test
+
+            if sims.dual_volume_averaging:
+                self.compute = self.dual_volume_averaging_updating
+
         elif sims.mode == "Lightweight":
             self.compute = self.lightweight
 
@@ -69,6 +82,7 @@ class Engine(object):
         self.apply_contact_velocity_constraints = no_operation
         self.apply_contact_reflection_constraints = no_operation
         self.apply_particle_traction_constraints = no_operation
+        self.apply_pressure_constraints = no_operation
 
         if int(scene.boundary.velocity_list[0]) > 0:
             self.apply_velocity_constraints = self.velocity_constraints
@@ -96,6 +110,13 @@ class Engine(object):
         self.compute_nodal_kinematic = self.compute_nodal_kinematics
         self.compute_contact_force_ = no_operation
         self.pressure_smoothing_ = no_operation
+        self.compute_grid_volume_averaged_jacobian = no_operation
+        self.compute_volume_averaged_relative_deformation_gradient = no_operation
+        self.compute_volume_averaged_jacobian = no_operation
+        self.pi_projection_ = no_operation
+        self.pressure_smoothing_visualization_ = no_operation
+        self.free_surface_by_volume = no_operation
+        self.particle_shifting_ = no_operation
         self.compute_forces = no_operation
         self.compute_stress_strains = no_operation
         self.bulid_neighbor_list = no_operation
@@ -151,6 +172,19 @@ class Engine(object):
 
             if sims.pressure_smoothing:
                 self.pressure_smoothing_ = self.pressure_smoothing
+
+            if sims.dual_volume_averaging:
+                self.compute_velocity_gradient = self.update_velocity_gradient_volume_averaging
+                self.compute_grid_volume_averaged_jacobian = self.update_grid_volume_averaged_jacobian
+                self.compute_volume_averaged_relative_deformation_gradient = self.update_volume_averaged_relative_deformation_gradient
+                self.compute_volume_averaged_jacobian = self.update_volume_averaged_jacobian
+                self.compute_stress_strains = self.compute_stress_strain_dual_volume
+                self.free_surface_by_volume = self.detection_free_surface_cell
+                self.pi_projection_ = self.pi_projection
+                # self.pressure_smoothing_visualization_ = self.pressure_smoothing_visualization
+
+            if sims.particle_shifting:
+                self.particle_shifting_ = self.delta_particle_shifting
 
             if sims.velocity_projection_scheme == "Affine" or sims.velocity_projection_scheme == "Taylor":
                 self.compute_nodal_kinematic = self.compute_nodal_kinematics_taylor
@@ -239,6 +273,19 @@ class Engine(object):
             if sims.pressure_smoothing:
                 self.pressure_smoothing_ = self.pressure_smoothing
 
+            if sims.dual_volume_averaging:
+                self.compute_velocity_gradient = self.update_velocity_gradient_volume_averaging_2D
+                self.compute_grid_volume_averaged_jacobian = self.update_grid_volume_averaged_jacobian
+                self.compute_volume_averaged_relative_deformation_gradient = self.update_volume_averaged_relative_deformation_gradient
+                self.compute_volume_averaged_jacobian = self.update_volume_averaged_jacobian_2D
+                self.compute_stress_strains = self.compute_stress_strain_dual_volume_2D
+                self.free_surface_by_volume = self.detection_free_surface_cell_2D
+                self.pi_projection_ = self.pi_projection
+                # self.pressure_smoothing_visualization_ = self.pressure_smoothing_visualization
+
+            if sims.particle_shifting:
+                self.particle_shifting_ = self.delta_particle_shifting_2D
+
             if sims.velocity_projection_scheme == "Affine" or sims.velocity_projection_scheme == "Taylor":
                 if sims.is_2DAxisy:
                     self.compute_nodal_kinematic = self.compute_nodal_kinematics_taylor_2DAxisy
@@ -283,6 +330,12 @@ class Engine(object):
         kernel_pressure_p2g(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
         kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node)
         kernel_pressure_g2p(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+
+    def pressure_smoothing_visualization(self, scene: myScene):
+        scene.node.pressure.fill(0)
+        kernel_pressure_visualization_p2g(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
+        kernel_grid_pressure(scene.mass_cut_off, scene.is_rigid, scene.node)
+        kernel_pressure_visualization_g2p(int(scene.particleNum[0]), scene.element.grid_nodes, scene.node, scene.particle, scene.material.stateVars, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
 
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
         kernel_mass_momentum_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle, scene.element.LnID, scene.element.shape_fn, scene.element.node_size)
@@ -372,6 +425,45 @@ class Engine(object):
         raise NotImplementedError
     
     def compute_stress_strain_2D(self, sims, scene):
+        raise NotImplementedError
+    
+    def update_velocity_gradient_volume_averaging_2D(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def update_velocity_gradient_volume_averaging(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def update_grid_volume_averaged_jacobian(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+    
+    def update_volume_averaged_relative_deformation_gradient(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def update_volume_averaged_jacobian(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+    
+    def update_volume_averaged_jacobian_2D(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def pi_projection(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError  
+    
+    def compute_stress_strain_dual_volume(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+    
+    def compute_stress_strain_dual_volume_2D(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+    
+    def detection_free_surface_cell(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+    
+    def detection_free_surface_cell_2D(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def delta_particle_shifting(self, sims: Simulation, scene: myScene):
+        raise NotImplementedError
+
+    def delta_particle_shifting_2D(self, sims: Simulation, scene: myScene):
         raise NotImplementedError
     
     def update_angular_velocity(self, sims: Simulation, scene: myScene):
@@ -492,4 +584,7 @@ class Engine(object):
         raise NotImplementedError
     
     def test(self, sims, scene):
+        raise NotImplementedError
+    
+    def dual_volume_averaging_updating(self, sims, scene):
         raise NotImplementedError

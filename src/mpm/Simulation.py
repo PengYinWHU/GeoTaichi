@@ -29,6 +29,7 @@ class Simulation(object):
         self.stress_integration = None
         self.stabilize = None
         self.pressure_smoothing = False
+        self.dual_volume_averaging = False
         self.strain_smoothing = False
         self.random_field = False
         self.mapping = None
@@ -187,6 +188,11 @@ class Simulation(object):
 
     def set_pressure_smoothing(self, pressure_smoothing):
         self.pressure_smoothing = pressure_smoothing
+
+    def set_dual_volume_averaging(self, dual_volume_averaging):
+        if dual_volume_averaging is True:
+            self.dual_volume_averaging = dual_volume_averaging
+            GlobalVariable.DUALVOLUMEAVERAGING = dual_volume_averaging
 
     def set_strain_smoothing(self, strain_smoothing):
         self.strain_smoothing = strain_smoothing

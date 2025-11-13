@@ -6,7 +6,7 @@ from src.mpm.SceneManager import myScene
 from src.mpm.Simulation import Simulation
 from src.utils.ObjectIO import DictIO
 from src.utils.RegionFunction import RegionFunction
-from src.utils.TypeDefination import vec6f
+from src.utils.TypeDefination import vec6f, mat2x2, mat3x3
 
 
 class Generator(object):
@@ -69,6 +69,15 @@ class Generator(object):
         kernel_apply_vigot_stress_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, initialStress, scene.particle)
         if self.sims.material_type == "TwoPhaseSingleLayer":
             kernel_apply_pore_pressure_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, porePressure, scene.particle)
+
+    def set_particle_deformation_gradient(self, scene: myScene, particle_num):
+        if self.sims.dimension == 3:
+            internalDeformationGradient = mat3x3([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])
+            kernel_apply_deformation_gradient_3x3_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, internalDeformationGradient, scene.particle)
+        elif self.sims.dimension == 2:
+            internalDeformationGradient = mat2x2([1.0, 0.0], [0.0, 1.0])
+            kernel_apply_deformation_gradient_2x2_(int(scene.particleNum[0]), int(scene.particleNum[0]) + particle_num, internalDeformationGradient, scene.particle)
+        
 
     def set_traction(self, particle_num, tractions, scene: myScene, region: RegionFunction=None):
         scene.boundary.get_essentials(scene.is_rigid, scene.psize, self.myRegion)

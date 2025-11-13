@@ -58,6 +58,20 @@ def kernel_apply_pore_pressure_(start: int, end: int, pore_pressure: float, part
         particle[np].pressure += pore_pressure
 
 @ti.kernel
+def kernel_apply_deformation_gradient_3x3_(start: int, end: int, deformation_gradient: ti.types.matrix(3, 3, float), particle: ti.template()):
+    for np in range(start, end):
+        particle[np].relative_deformation_gradient = deformation_gradient
+        particle[np].volume_averaged_relative_deformation_gradient = deformation_gradient
+        particle[np].volume_averaged_jacobian = 1.0
+
+@ti.kernel
+def kernel_apply_deformation_gradient_2x2_(start: int, end: int, deformation_gradient: ti.types.matrix(2, 2, float), particle: ti.template()):
+    for np in range(start, end):
+        particle[np].relative_deformation_gradient = deformation_gradient
+        particle[np].volume_averaged_relative_deformation_gradient = deformation_gradient
+        particle[np].volume_averaged_jacobian = 1.0
+
+@ti.kernel
 def kernel_activate_cell_(start_point: ti.types.vector(3, float), region_size: ti.types.vector(3, float), nodal_coords: ti.template(), 
                           node_connectivity: ti.template(), cell_active: ti.template(), is_in_region: ti.template()):
     for nc in range(cell_active.shape[0]):

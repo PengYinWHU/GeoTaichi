@@ -109,6 +109,10 @@ class myScene(object):
                 ptemp.members.update({"grad_E2": ti.types.vector(sims.dimension, float)})
             if sims.neighbor_detection is True or  sims.free_surface_detection is True or sims.boundary_direction_detection is True:
                 ptemp.members.update({"free_surface": ti.u8, "mass_density": float, "normal": vec3f})
+            if sims.dual_volume_averaging is True:
+                ptemp.members.update({"relative_deformation_gradient": ti.types.matrix(sims.dimension, sims.dimension, float)})
+                ptemp.members.update({"volume_averaged_relative_deformation_gradient": ti.types.matrix(sims.dimension, sims.dimension, float)})
+                ptemp.members.update({"volume_averaged_jacobian": float})
             self.particle = ptemp.field()
             ti.root.dense(ti.i, sims.max_particle_num).place(self.particle)
             """ if sims.solver_type == "Explicit":
@@ -182,6 +186,9 @@ class myScene(object):
         else:
             self.element.element_initialize(sims)
         self.element.activate_euler_cell(sims)
+        if sims.dual_volume_averaging:
+            self.element.activate_free_surface_cell(sims)
+
 
     def find_grid_level(self, sims: Simulation):
         grid_level = 1
@@ -279,6 +286,12 @@ class myScene(object):
                 gtemp.members.update({"pressure": float})
         if sims.particle_shifting is True:
             gtemp.members.update({"vol": float})
+        if sims.dual_volume_averaging is True:
+            gtemp.members.update({"volume_averaged_jacobian": float})
+        if 'vol' not in gtemp.members.keys():
+            gtemp.members.update({"vol": float})
+        if 'pressure' not in gtemp.members.keys():
+            gtemp.members.update({"pressure": float})
         self.node = gtemp.field()
         self.child.place(self.node)
         self.node.fill(0)

@@ -29,6 +29,21 @@ class HexahedronGuassCell:
             self.stress = ZEROVEC6f
             self.vol = 0.
 
+@ti.dataclass
+class HexahedronFreeSurfaceCell:
+    active: ti.u8
+    is_free_surface: ti.u8
+    is_free_surface_trail: ti.u8
+    volume: float
+
+    @ti.func
+    def _reset(self):
+        self.volume = 0.
+
+    @ti.func
+    def _update_cell_volume(self, volume):
+        self.volume += volume
+
 
 @ti.data_oriented
 class IncompressibleCell:

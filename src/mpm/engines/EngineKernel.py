@@ -70,6 +70,10 @@ def gauss_cell_reset(cell: ti.template(), sub_cell: ti.template()):
     for nc, nb in sub_cell:
         sub_cell[nc, nb]._reset()
 
+@ti.kernel
+def fs_cell_reset(cell: ti.template()):
+    for nc, nb in cell:
+        cell[nc, nb]._reset()
 
 @ti.kernel
 def contact_force_reset(particleNum: int, particle: ti.template()):
@@ -1283,6 +1287,18 @@ def kernel_volume_p2g(total_nodes: int, particleNum: int, node: ti.template(), p
                 nvol = shape_mapping(shapefn[ln], volume)
                 node[nodeID, bodyID].vol += nvol
 
+@ti.kernel
+def kernel_pi_volume_p2g(total_nodes: int, particleNum: int, node: ti.template(), particle: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    ti.block_local(node.vol)
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            offset = np * total_nodes
+            volume = particle[np].vol
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                nvol = shape_mapping(shapefn[ln], volume)
+                node[nodeID, bodyID].vol += nvol
 
 @ti.kernel
 def kernel_jacobian_p2g(total_nodes: int, dt: ti.template(), particleNum: int, node: ti.template(), particle: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
@@ -1311,6 +1327,48 @@ def kernel_pressure_p2g(particleNum: int, total_nodes: int, node: ti.template(),
                 nodeID = LnID[ln]
                 node[nodeID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
 
+@ti.kernel
+def kernel_update_grid_volume_averaged_jacobian_p2g(particleNum: int, total_nodes: int, dt: ti.template(), node: ti.template(), particle: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    ti.block_local(node.vol)
+    ti.block_local(node.volume_averaged_jacobian)
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            volume = particle[np].vol
+            velocity_gradient = particle[np].velocity_gradient
+            particle_volume_averaged_jacobian = particle[np].volume_averaged_jacobian
+            particle_delta_jacobian = 1. + dt[None] * trace(velocity_gradient)
+            transfer_var = volume * particle_volume_averaged_jacobian * particle_delta_jacobian
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                node[nodeID, bodyID].vol += shape_mapping(shapefn[ln], volume)
+                node[nodeID, bodyID].volume_averaged_jacobian += shape_mapping(shapefn[ln], transfer_var)  
+
+@ti.kernel
+def kernel_pi_pressure_p2g(particleNum: int, total_nodes: int, node: ti.template(), particle: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    ti.block_local(node.pressure)
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            pressure = particle[np].vol * particle[np]._get_mean_stress()
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                node[nodeID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+
+@ti.kernel
+def kernel_pressure_visualization_p2g(particleNum: int, total_nodes: int, node: ti.template(), particle: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    ti.block_local(node.pressure)
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            pressure = particle[np].m * stateVars[np].pressure
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                node[nodeID, bodyID].pressure += shape_mapping(shapefn[ln], pressure)
+
 # ========================================================= #
 #                Grid Projection Operator                   #
 # ========================================================= #
@@ -1324,6 +1382,78 @@ def kernel_find_valid_element(cell_vol: float, cell: ti.template()):
                     cell[nc, nb].active = ti.u8(1)
                 else:
                     cell[nc, nb].active = ti.u8(0)
+
+@ti.kernel
+def kernel_find_free_surface_element_trail(cell_vol: float, cell: ti.template()):
+    threshold = 0.01
+    for nc in range(cell.shape[0]):
+        for nb in range(cell.shape[1]):
+            if cell[nc, nb].volume / cell_vol < threshold:
+                cell[nc, nb].is_free_surface_trail = ti.u8(1)
+                cell[nc, nb].is_free_surface = ti.u8(1)
+            else:
+                cell[nc, nb].is_free_surface_trail = ti.u8(0)
+                cell[nc, nb].is_free_surface = ti.u8(0)
+
+@ti.kernel
+def kernel_determine_real_free_surface_element(cnum: ti.types.vector(GlobalVariable.DIMENSION, int), cell: ti.template()):
+    threshold = 0.2
+    for nc in range(cell.shape[0]):
+        for nb in range(cell.shape[1]):
+            if int(cell[nc, nb].is_free_surface_trail) == 1:
+                base = vec3i(vectorize_id(nc, cnum))
+                count = int(0)
+                for offset in ti.static(ti.ndrange(*((-1, 2),) * GlobalVariable.DIMENSION)):
+                    cellID = linearize(base+offset, cnum)
+                    if nc != cellID:
+                        if int(cell[cellID, nb].is_free_surface_trail) == 1:
+                            count += 1
+                if float(count / (GlobalVariable.DIMENSION**2 - 1)) > threshold:
+                    cell[nc, nb].is_free_surface = ti.u8(1)
+                else:
+                    cell[nc, nb].is_free_surface = ti.u8(0)
+
+@ti.kernel
+def kernel_determine_real_free_surface_element_2D(cnum: ti.types.vector(GlobalVariable.DIMENSION, int), cell: ti.template()):
+    threshold = 0.5
+    for nc in range(cell.shape[0]):
+        for nb in range(cell.shape[1]):
+            if int(cell[nc, nb].is_free_surface_trail) == 1:
+                base = vec2i(vectorize_id(nc, cnum))
+                count = int(0)
+                total_count = int(0)
+                for offset in ti.static(ti.ndrange(*((-1, 2),) * GlobalVariable.DIMENSION)):
+                    cellID = linearize(base+offset, cnum)
+                    if nc != cellID:
+                        total_count += 1
+                        if int(cell[cellID, nb].is_free_surface_trail) == 1:
+                            count += 1
+                if float(count / total_count) > threshold:
+                    cell[nc, nb].is_free_surface = ti.u8(1)
+                else:
+                    cell[nc, nb].is_free_surface = ti.u8(0)
+
+@ti.kernel
+def kernel_apply_dirichlet_pressure_constraints(cnum: ti.types.vector(3, int), gnum: ti.types.vector(3, int), cell: ti.template(), node: ti.template()):
+    for nc in range(cell.shape[0]):
+        for nb in range(cell.shape[1]):
+            if int(cell[nc, nb].is_free_surface) == 1:
+                base = vec3i(vectorize_id(nc, cnum))
+                for i, j, k in ti.static(ti.ndrange(2, 2, 2)):
+                        nx, ny, nz = base[0] + i, base[1] + j, base[2] + k
+                        nodeID = nx + ny * gnum[0] + nz * gnum[0] * gnum[1]
+                        node[nodeID, nb].pressure *= 0.0
+
+@ti.kernel
+def kernel_apply_dirichlet_pressure_constraints_2D(cnum: ti.types.vector(2, int), gnum: ti.types.vector(2, int), cell: ti.template(), node: ti.template()):
+    for nc in range(cell.shape[0]):
+        for nb in range(cell.shape[1]):
+            if int(cell[nc, nb].is_free_surface) == 1:
+                base = vec2i(vectorize_id(nc, cnum))
+                for i, j in ti.static(ti.ndrange(2, 2)):
+                    nx, ny = base[0] + i, base[1] + j
+                    nodeID = nx + ny * gnum[0]
+                    node[nodeID, nb].pressure *= 0.0
 
 @ti.kernel
 def kernel_compute_gauss_average_stress(gauss_num: int, cut_off: float, cell: ti.template(), sub_cell: ti.template()):
@@ -1449,6 +1579,13 @@ def kernel_grid_pressure_volume(cutoff: float, is_rigid: ti.template(), node: ti
             if node[ng, nb].vol > cutoff and is_rigid[nb] == 0:
                 node[ng, nb].pressure /= node[ng, nb].vol
 
+@ti.kernel
+def kernel_grid_volume_averaged_jacobian(cutoff: float, is_rigid: ti.template(), node: ti.template()):
+    for ng in range(node.shape[0]):
+        for nb in range(node.shape[1]):
+            if node[ng, nb].vol > cutoff and is_rigid[nb] == 0:
+                node[ng, nb].volume_averaged_jacobian /= node[ng, nb].vol    
+
 # ========================================================= #
 #                 Grid to Particle (G2P)                    #
 # ========================================================= #
@@ -1517,6 +1654,64 @@ def kernel_pressure_g2p(particleNum: int, total_nodes: int, node: ti.template(),
                 pressure += shape_mapping(shapefn[ln], node[nodeID, bodyID].pressure)
             particle[np]._update_stress(-(mean_stress - pressure) * EYE)
 
+@ti.kernel
+def kernel_volume_averaged_relative_deformation_gradient_g2p(particleNum: int, total_nodes: int, dt: ti.template(), node: ti.template(), particle: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            velocity_gradient = particle[np].velocity_gradient
+            relative_deformation_gradient = particle[np].relative_deformation_gradient
+            particle_volume_averaged_jacobian = particle[np].volume_averaged_jacobian
+            particle_delta_jacobian = 1. + dt[None] * trace(velocity_gradient)
+            transfer_var = 0.
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                transfer_var += shape_mapping(shapefn[ln], node[nodeID, bodyID].volume_averaged_jacobian)
+            particle[np].volume_averaged_relative_deformation_gradient = ti.pow(transfer_var / particle_volume_averaged_jacobian / particle_delta_jacobian, 1.0 / GlobalVariable.DIMENSION) * relative_deformation_gradient
+
+@ti.kernel
+def kernel_update_volume_averaged_jacobian(particleNum: int, particle: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            volume_averaged_relative_F = particle[np].volume_averaged_relative_deformation_gradient
+            volume_averaged_delta_jacobian = 1. + trace(volume_averaged_relative_F - DELTA)
+            particle[np].volume_averaged_jacobian *= volume_averaged_delta_jacobian
+
+@ti.kernel
+def kernel_update_volume_averaged_jacobian_2D(particleNum: int, particle: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            volume_averaged_relative_F = particle[np].volume_averaged_relative_deformation_gradient
+            volume_averaged_delta_jacobian = 1. + trace(volume_averaged_relative_F - DELTA2D)
+            particle[np].volume_averaged_jacobian *= volume_averaged_delta_jacobian
+
+@ti.kernel
+def kernel_pi_pressure_g2p(particleNum: int, total_nodes: int, node: ti.template(), particle: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            pressure = 0.
+            mean_stress = particle[np]._get_mean_stress()
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                pressure += shape_mapping(shapefn[ln], node[nodeID, bodyID].pressure)
+            particle[np]._update_stress(-(mean_stress - pressure) * EYE)
+            stateVars[np].pressure = pressure
+
+@ti.kernel
+def kernel_pressure_visualization_g2p(particleNum: int, total_nodes: int, node: ti.template(), particle: ti.template(), stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    for np in range(particleNum):
+        if int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            pressure = 0.
+            offset = np * total_nodes
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                pressure += shape_mapping(shapefn[ln], node[nodeID, bodyID].pressure)
+            stateVars[np].pressure_visualization = pressure
+
 # ========================================================= #
 #                 Apply Constitutive Model                  #
 # ========================================================= #
@@ -1555,6 +1750,28 @@ def kernel_compute_stress_strain_2D(start_index: int, end_index: int, dt: ti.tem
         np = materialID[i]
         if int(particle[np].active) == 1:
             velocity_gradient = particle[np].velocity_gradient
+            previous_stress = particle[np].stress
+            particle[np].stress = matProps.ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
+
+@ti.kernel
+def kernel_compute_stress_strain_dual_volume(start_index: int, end_index: int, dt: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template()):
+    # ti.block_local(dt)
+    for i in range(start_index, end_index):
+        np = materialID[i]
+        if int(particle[np].active) == 1:
+            volume_averaged_delta_F = particle[np].volume_averaged_relative_deformation_gradient
+            velocity_gradient = (volume_averaged_delta_F - DELTA) / dt[None]
+            previous_stress = particle[np].stress
+            particle[np].stress = matProps.ComputeStress(np, previous_stress, velocity_gradient, stateVars, dt)
+
+@ti.kernel
+def kernel_compute_stress_strain_dual_volume_2D(start_index: int, end_index: int, dt: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template()):
+    # ti.block_local(dt)
+    for i in range(start_index, end_index):
+        np = materialID[i]
+        if int(particle[np].active) == 1:
+            volume_averaged_delta_F = particle[np].volume_averaged_relative_deformation_gradient
+            velocity_gradient = (volume_averaged_delta_F - DELTA2D) / dt[None]
             previous_stress = particle[np].stress
             particle[np].stress = matProps.ComputeStress2D(np, previous_stress, velocity_gradient, stateVars, dt)
 
@@ -1653,6 +1870,29 @@ def kernel_update_velocity_gradient_affine(total_nodes: int, start_index: int, e
             particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
 
 @ti.kernel
+def kernel_update_velocity_gradient_volume_averaging(total_nodes: int, start_index: int, end_index: int, gnum: ti.types.vector(3, int), grid_size: ti.types.vector(3, float), dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), 
+                                                     LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    for i in range(start_index, end_index):
+        np = materialID[i]
+        if int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            Wp = ZEROMAT3x3
+            Bp = ZEROMAT3x3
+            offset = np * total_nodes
+            position = particle[np].x
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                grid_coord = grid_size * vec3f(vectorize_id(nodeID, gnum))
+                pointer = grid_coord - position
+                gv = node[nodeID, bodyID].momentum
+                shape_fn = shapefn[ln]
+                Wp += shape_fn * outer_product(pointer, pointer)
+                Bp += shape_fn * outer_product(gv, pointer)
+            velocity_gradient = truncation(Bp @ Wp.inverse())
+            particle[np].velocity_gradient = velocity_gradient
+            particle[np].relative_deformation_gradient = DELTA + dt[None] * velocity_gradient
+
+@ti.kernel
 def kernel_update_velocity_gradient_bbar(total_nodes: int, start_index: int, end_index: int, dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(),  
                                          stateVars: ti.template(), LnID: ti.template(), dshapefn: ti.template(), dshapefnc: ti.template(), node_size: ti.template()):
     for i in range(start_index, end_index):
@@ -1720,6 +1960,29 @@ def kernel_update_velocity_gradient_affine_2D(total_nodes: int, start_index: int
             velocity_gradient = truncation(Bp @ Wp.inverse())
             particle[np].velocity_gradient = truncation(velocity_gradient)
             particle[np].vol *= matProps.update_particle_volume_2D(np, velocity_gradient, stateVars, dt)
+
+@ti.kernel
+def kernel_update_velocity_gradient_volume_averaging_2D(total_nodes: int, start_index: int, end_index: int, gnum: ti.types.vector(2, int), grid_size: ti.types.vector(2, float), dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), 
+                                                        LnID: ti.template(), shapefn: ti.template(), node_size: ti.template()):
+    for i in range(start_index, end_index):
+        np = materialID[i]
+        if int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            Wp = ZEROMAT2x2
+            Bp = ZEROMAT2x2
+            offset = np * total_nodes
+            position = particle[np].x
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                grid_coord = grid_size * vec2f(vectorize_id(nodeID, gnum))
+                pointer = grid_coord - position
+                gv = node[nodeID, bodyID].momentum
+                shape_fn = shapefn[ln]
+                Wp += shape_fn * outer_product2D(pointer, pointer)
+                Bp += shape_fn * outer_product2D(gv, pointer)
+            velocity_gradient = truncation(Bp @ Wp.inverse())
+            particle[np].velocity_gradient = truncation(velocity_gradient)
+            particle[np].relative_deformation_gradient = DELTA2D + dt[None] * velocity_gradient
 
 @ti.kernel
 def kernel_update_velocity_gradient_2DAxisy(total_nodes: int, start_index: int, end_index: int, dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template(), 
@@ -2337,10 +2600,10 @@ def kernel_momentum_mlsp2g(total_nodes: int, igrid_size: ti.types.vector(3, floa
 # ========================================================= #
 #                    Particle shifting                      #
 # ========================================================= #
+# refer to A.S. Baumgarten, K. Kamrin, Analysis and mitigation of spatial integration errors for the material point method, Internat. J. Numer. Methods Engrg. (2023).
 @ti.kernel
 def kernel_particle_shifting_delta_correction(total_nodes: int, particleNum: int, grid_size: ti.types.vector(3, float), node: ti.template(), particle: ti.template(), 
-                                              LnID: ti.template(), dshapefn: ti.template(), node_size: ti.template(), ):
-    # refer to A.S. Baumgarten, K. Kamrin, Analysis and mitigation of spatial integration errors for the material point method, Internat. J. Numer. Methods Engrg. (2023).
+                                            LnID: ti.template(), dshapefn: ti.template(), node_size: ti.template(), ):
     E2 = 0.
     for ng in range(node.shape[0]):
         for nb in range(node.shape[1]):
@@ -2366,6 +2629,36 @@ def kernel_particle_shifting_delta_correction(total_nodes: int, particleNum: int
     if den > 0.:
         for np in range(particleNum):
             particle[np].x -= E2 / den * particle[np].grad_E2
+
+@ti.kernel
+def kernel_particle_shifting_delta_correction_2D(total_nodes: int, particleNum: int, grid_size: ti.types.vector(2, float), node: ti.template(), particle: ti.template(), 
+                                                 LnID: ti.template(), dshapefn: ti.template(), node_size: ti.template(), ):
+    E2 = 0.
+    for ng in range(node.shape[0]):
+        for nb in range(node.shape[1]):
+            if node[ng, nb].vol > Threshold:
+                EI = ti.max(0, -grid_size[0] * grid_size[1] + node[ng, nb].vol)
+                E2 += EI * EI
+
+    den = 0.
+    for np in range(particleNum):
+        if int(particle[np].materialID) > 0 and int(particle[np].active) == 1:
+            bodyID = int(particle[np].bodyID)
+            offset = np * total_nodes
+            grad_E2 = vec2f(0., 0.)
+            for ln in range(offset, offset + int(node_size[np])):
+                nodeID = LnID[ln]
+                dshape_fn = dshapefn[ln]
+                EI = ti.max(0, -grid_size[0] * grid_size[1] + node[nodeID, bodyID].vol)
+                grad_E2 += dshape_fn * EI
+            grad_E2 *= 2. * particle[np].vol
+            den += grad_E2.dot(grad_E2)
+            particle[np].grad_E2 = grad_E2
+    
+    if den > 0.:
+        for np in range(particleNum):
+            particle[np].x -= E2 / den * particle[np].grad_E2
+
 
 # ======================================== Implicit MPM ======================================== #
 # ========================================================= #
